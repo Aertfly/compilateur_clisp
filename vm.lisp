@@ -1,3 +1,15 @@
+; par convention, résultat des fonctions stocké dans R0
+
+(PUSH <n>)
+(MOVE FP R1)
+(MOVE SP FP)
+(MOVE SP R2)
+(SUB @u? R2)
+(DECR R2)
+(PUSH R2)
+(PUSH R1)
+(JUMP )
+
 (defun get-prop (mv prop)
   (get mv prop)
 )
@@ -12,16 +24,6 @@
 
     ; Registre
     (set-prop name :R0 0)
-    (set-prop name :R1 0)
-    (set-prop name :R2 0)
-    (set-prop name :R3 0)
-    
-    ; Pile
-    (set-prop name :BP 100)
-    (set-prop name :SP 100)
-    (set-prop name :FP 0)
-    
-    ; Comparaisons flag
     (set-prop name :R1 0)
     (set-prop name :R2 0)
     (set-prop name :R3 0)
@@ -82,7 +84,7 @@
 (defun vm_exec_inst_JMP   (vm label) )
 
 ; Appels et retours
-(defun vm_exec_inst_JSR (vm label) )
+(defun vm_exec_inst_JSR (vm label) ) ; met l'adresse de retour dans la pile et fait un jump
 (defun vm_exec_inst_RTN (vm) )
 
 ; Comparaisons
