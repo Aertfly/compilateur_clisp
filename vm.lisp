@@ -42,33 +42,38 @@
 (defun vm_get_registre (vm) )
 (defun vm_set_registre (vm) )
 
-; Manipulation mémoire/registres
-(defun vm_exec_inst_LOAD (vm src dest) 
-  ;(set-mem vm dest (read_value vm src))
-  (let (addr (
-    (cond
-      ((integerp src)
-        (src)
-      )
-      ((listp src)
-        (case (first src)
-          (:CONST (error "Pas de constante acceptée par load"))             ; erreur
-          (:REF   (get-mem vm (second src))) ; est un registre on recup sa valeur, on ira chercher à cette adresse
-          (+    
-            (let ((val-registre (get-mem vm (second src))) 
-                      (offset (third src)))                     
-                  (+ val-registre offset)))                 
-          ) 
-          (t (error "Type d'opérande inconnu : ~S" src))
-        ))
-        (t (error "Argument invalide (ni entier ni liste) : ~S")
-      )
+
+(defun resolve_addr vm  src
+  (cond
+    ((integerp src)
+      (src)
     )
-  ))
-  (set-mem vm dest (read_value vm sr)) 
+    ((listp src)
+      (case (first src)
+        (:CONST (error "Pas de constante acceptée par load"))             ; erreur
+        (:REF   (get-mem vm (second src))) ; est un registre on recup sa valeur, on ira chercher à cette adresse
+        (+    
+          (let ((val-registre (get-mem vm (second src))) 
+                    (offset (third src)))                     
+                (+ val-registre offset)))                 
+        ) 
+        (t (error "Type d'opérande inconnu : ~S" src))
+      ))
+      (t (error "Argument invalide (ni entier ni liste) : ~S")
+  )
 )
 
-(defun vm_exec_inst_STORE (src dest) )
+; Manipulation mémoire/registres
+; charge une addr dans la pile dans un registre
+(defun vm_exec_inst_LOAD (vm src dest) 
+  (set-prop vm dest (read_value vm (resolve_addr vm src))) 
+)
+
+; charge une valeur dans un registre dans une addr sur la pile
+(defun vm_exec_inst_STORE (src dest) 
+  (set-mem vm (resolve_addr vm dest) (read_value vm src))
+  setf( get-prop(vm mem) 
+)
 
 (defun vm_exec_inst_MOVE (vm src dest) 
   (set-mem vm dest (read_value vm sr))
@@ -89,9 +94,9 @@
   (set-mem vm dest (/ (read_value vm dest) (read_value vm src)))
 )
 
-(defun vm_exec_inst_INCR (vm dest) ; DEST += 1
-  (set-mem vm dest (+ (read_value vm dest) 1))
-)
+(defun vm_exec_inst_INCR (vm dest) ; DEST += 1 ; A TESTER
+  (let ((registre (if (listp dest) (second dest) dest)))
+    (set-mem vm registre (+ (read_value vm dest) 1))))
 
 (defun vm_exec_inst_DECR (vm dest) ; DEST -= 1
   (set-mem vm dest (- (read_value vm dest) 1))
