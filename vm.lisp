@@ -72,7 +72,7 @@
 ; charge une valeur dans un registre dans une addr sur la pile
 (defun vm_exec_inst_STORE (src dest) 
   (set-mem vm (resolve_addr vm dest) (read_value vm src))
-  setf( get-prop(vm mem) 
+  setf( get-prop(vm mem) ; TODO
 )
 
 (defun vm_exec_inst_MOVE (vm src dest) 
