@@ -24,6 +24,7 @@
     (set-prop name :LC 0); Load counter, ????
 
     ;etiq Table de hashage pour les étiquettes
+    (set-prop name :labels (make-hash-table))
     ;etiqNr Table non résolue des étiquettes
 
     (set-prop name :mem (make-array size :initial-element 0)); Mémoire avec code + pile
@@ -66,7 +67,7 @@
           (PUSH (vm_exec_inst_PUSH vm (first args)))
           (POP (vm_exec_inst_POP vm (first args)))
           ;
-          (LABEL (vm_exec_inst_LABEL vm (first args)))
+          ; LABEL : pas une instruction
           (JMP (vm_exec_inst_JMP vm (first args)))
           ;
           (JSR (vm_exec_inst_JSR vm (first args)))
@@ -93,33 +94,33 @@
 )
 
 ; 
-(defun vm_load_exec (vm) ) ; TODO charge et exécute du code
-; 
-
-;;;;;
-
-(defun vm_get_registre (vm) ) ; TODO
-(defun vm_set_registre (vm) ) ; TODO
-
-
-(defun resolve_addr (vm  src)
-  (cond
-    ((integerp src) src
+(defun vm_load (vm code-list)
+  (let ((addr 0))
+    (dolist (inst code-list)
+      (if (eq (first inst) 'LABEL) ; On est dans le cas LABEL avec (second inst) qui est le nom du label
+        (setf (gethash (second inst) (get-prop vm :labels)) addr)
+        (progn ; Pour exécuter plusieurs instructions
+          (set-mem vm addr inst)
+          (incf addr)
+        )
+      )
     )
-    ((listp src)
-      (case (first src)
-        (:CONST (error "Pas de constante acceptée par load"))             ; erreur
-        (:REF   (get-mem vm (second src))) ; est un registre on recup sa valeur, on ira chercher à cette adresse
-        (+    
-          (let ((val-registre (get-mem vm (second src))) 
-                    (offset (third src)))                     
-                (+ val-registre offset)))                 
-        ) 
-        (t (error "Type d'opérande inconnu : ~S" src))
-      ))
-      (t (error "Argument invalide (ni entier ni liste) : ~S")
   )
 )
+
+
+(defun resolve_addr (vm src)
+  (cond
+    ((integerp src) src)
+    ((listp src)
+      (case (first src)
+        (:CONST (error "Pas de constante acceptée par load/store"))
+        (:REF   (get-mem vm (second src)))
+        (+      (let ((val-registre (get-mem vm (second src))) 
+                      (offset (third src)))                     
+                  (+ val-registre offset)))
+        (t (error "Type d'opérande inconnu : ~S" src))))
+    (t (error "Argument invalide : ~S" src))))
 
 ; Manipulation mémoire/registres
 ; charge une addr dans la pile dans un registre
@@ -128,12 +129,16 @@
 )
 
 ; charge une valeur dans un registre dans une addr sur la pile
-(defun vm_exec_inst_STORE (src dest) 
+(defun vm_exec_inst_STORE (vm src dest) 
   (set-mem vm (resolve_addr vm dest) (read_value vm src))
 )
 
 (defun vm_exec_inst_MOVE (vm src dest) 
-  (set-mem vm dest (read_value vm src))
+  (let ((val (read_value vm src))
+        ;; Si dest est une liste (ex: (:REF :SP) ou (+ :FP 1)), on calcule l'adresse réelle.
+        ;; Sinon (ex: :R0), on garde le symbole.
+        (target (if (listp dest) (resolve_addr vm dest) dest)))
+    (set-mem vm target val))
 )
 
 (defun vm_exec_inst_ADD (vm src dest) ; DEST += SRC
@@ -141,8 +146,9 @@
 )
 
 (defun vm_exec_inst_SUB (vm src dest) ; DEST -= SRC
-  (set-mem vm dest (- (read_value vm src) (read_value vm dest)))
+  (set-mem vm dest (- (read_value vm dest) (read_value vm src)))
 )
+
 (defun vm_exec_inst_MUL (vm src dest) ; DEST *= SRC
   (set-mem vm dest (* (read_value vm src) (read_value vm dest)))
 )
@@ -152,42 +158,58 @@
 )
 
 (defun vm_exec_inst_INCR (vm dest)
-  (set-mem 
-    vm 
-    (if (listp dest) (second dest) dest) ; Adresse (:R0 si on passe (:REF :R0), ou un entier passé directement)
-    (+ (read_value vm dest) 1))) ; Valeur incrémentée
+  (let ((target (if (listp dest) (resolve_addr vm dest) dest)))
+    (set-mem vm target (+ (read_value vm dest) 1))))
 
-(defun vm_exec_inst_DECR (vm dest) ; DEST -= 1
-  (set-mem 
-    vm
-    (if (listp dest) (second dest) dest)
-    (- (read_value vm dest) 1)))
+(defun vm_exec_inst_DECR (vm dest)
+  (let ((target (if (listp dest) (resolve_addr vm dest) dest)))
+    (set-mem vm target (- (read_value vm dest) 1))))
 
 ; Pile
 (defun vm_exec_inst_PUSH (vm src) ;push src sur la pile et incrémente SP
-  (vm_exec_inst_INCR(vm :REF SP)) ; incrémente SP
-  (vm_exec_inst_MOVE(vm src :REF SP))
+  (vm_exec_inst_INCR vm :SP) ; incrémente SP
+  (vm_exec_inst_MOVE vm src '(:REF :SP))
 ); On incrémente puis on met la valeur
 
 (defun vm_exec_inst_POP (vm dest) ; pop, met dans dest la valeur au sommet de la pile et décrémente SP
-  (vm_exec_inst_MOVE(vm :REF SP dest))
-  (vm_exec_inst_DECR(vm :REF SP)) ; décrémente SP
+  (vm_exec_inst_MOVE vm '(:REF :SP) dest)
+  (vm_exec_inst_DECR vm :SP) ; décrémente SP
 ); On enlève la valeur puis on décrémente
 
 ; Labels/sauts 
-(defun vm_exec_inst_LABEL (vm label) ) ; TODO déclare une étiquette
-(defun vm_exec_inst_JMP   (vm label) ) ; TODO saute à une étiquette
+(defun vm_exec_inst_JMP (vm label)
+  ;; On récupère l'adresse associée au label dans la table
+  (let ((target-addr (gethash label (get-prop vm :labels))))
+    (if target-addr
+        (set-prop vm :PC target-addr) ; On met à jour le PC
+        (error "Erreur : Label inconnu ~S" label))))
 
 ; Appels et retours
-(defun vm_exec_inst_JSR (vm label)) ; TODO met l'adresse de retour dans la pile et fait un jump
-(defun vm_exec_inst_RTN (vm) ) ; TODO retourne à l'adresse de retour
+(defun vm_exec_inst_JSR (vm label)
+  ;; On empile PC et FP comme des CONSTANTES brutes
+  (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
+  (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+  (set-prop vm :FP (get-prop vm :SP))
+  (vm_exec_inst_JMP vm label)
+)
+
+(defun vm_exec_inst_RTN (vm) 
+  ;; 1. On vide la pile locale (SP revient à FP)
+  (set-prop vm :SP (get-prop vm :FP))
+  
+  ;; 2. On restaure l'ancien FP
+  (vm_exec_inst_POP vm :FP)
+  
+  ;; 3. On restaure le PC (adresse de retour)
+  (vm_exec_inst_POP vm :PC)
+)
 
 ; Comparaisons
 (defun vm_exec_inst_CMP (vm src1 src2)
 ; alloue respectivement les registres FLT, FEQ, FGT à 1 pour celui qui est vrai, 0 pour les autres. Par ex si src1 > src2, on a 001
   (let 
-    ((val1 (get-mem vm src1)) 
-    (val2 (get-mem vm src2)))
+    ((val1 (read_value vm src1)) 
+    (val2 (read_value vm src2)))
 
     (set-mem vm :FLT 0)
     (set-mem vm :FEQ 0)
@@ -200,56 +222,37 @@
   )
 )
 
-(defun vm_exec_inst_JGT (vm label)
-  (vm_jmp_cond_helper vm 0 0 1 label)
-)
+(defun vm_exec_inst_JGT (vm label) (vm_jmp_cond_helper vm 0 0 1 label))
 
-(defun vm_exec_inst_JGE (vm label) 
-  (vm_jmp_cond_helper vm 0 1 1 label)
-)
+(defun vm_exec_inst_JGE (vm label) (vm_jmp_cond_helper vm 0 1 1 label))
 
-(defun vm_exec_inst_JLT (vm label) 
-  (vm_jmp_cond_helper vm 1 0 0 label)
-)
+(defun vm_exec_inst_JLT (vm label) (vm_jmp_cond_helper vm 1 0 0 label))
 
-(defun vm_exec_inst_JLE (vm label) 
-  (vm_jmp_cond_helper vm 1 1 0 label)
-)
+(defun vm_exec_inst_JLE (vm label) (vm_jmp_cond_helper vm 1 1 0 label))
 
-(defun vm_exec_inst_JEQ (vm label) 
-  (vm_jmp_cond_helper vm 0 1 0 label)
-)
+(defun vm_exec_inst_JEQ (vm label) (vm_jmp_cond_helper vm 0 1 0 label))
 
-(defun vm_exec_inst_JNE (vm label) 
-  (vm_jmp_cond_helper vm 1 0 1 label)
-)
+(defun vm_exec_inst_JNE (vm label) (vm_jmp_cond_helper vm 1 0 1 label))
 
 ; Tests logiques
-(defun vm_exec_inst_TEST  (vm src) ) ; TODO
-(defun vm_exec_inst_JTRUE (vm label) ) ; TODO
-(defun vm_exec_inst_JNIL  (vm label) ) ; TODO
+(defun vm_exec_inst_TEST (vm src)
+  (let ((val (read_value vm src)))
+    ;; CORRECTION : On considère comme FAUX si val est NIL *ou* si val est 0
+    (let ((is-false (or (null val) (and (numberp val) (= val 0)))))
+      
+      ;; Si c'est Faux (NIL ou 0), on active FEQ (utilisé par JNIL)
+      (set-mem vm :FEQ (if is-false 1 0))
+      
+      ;; On nettoie FLT (non utilisé par TEST logique habituellement, mais pour être propre)
+      (set-mem vm :FLT 0)
+      
+      ;; Si c'est Vrai (pas NIL et pas 0), on active FGT (utilisé par JTRUE)
+      (set-mem vm :FGT (if is-false 0 1)))))
 
-; Contrôle neutre
-(defun vm_exec_inst_NOP (vm) ) ; TODO ? Rien
-(defun vm_exec_inst_HALT (vm) ) ; TODO Arrêt de la VM
+(defun vm_exec_inst_JTRUE (vm label)
+  ;; Saute si le résultat n'était pas NIL (donc FGT=1 selon la logique ci-dessus)
+  (vm_jmp_cond_helper vm 0 0 1 label))
 
-; Fonction de test
-(defun test ()
-  (make_vm 'test 1000)
-  (afficher_registres 'test)
-  (vm_exec_inst_MOVE )
-  (afficher_registres 'test)
-)
-
-(defun test-exec ()
-  (make_vm 'test 100)
-  ;; On injecte le programme manuellement en mémoire :
-  (set-mem 'test 0 '(MOVE (:CONST 10) :R0))
-  (set-mem 'test 1 '(MOVE (:CONST 2) :R1))
-  (set-mem 'test 2 '(MUL :R0 :R1))
-  (set-mem 'test 3 '(HALT))
-
-  (vm_exec 'test) ; Doit tourner la boucle
-  (afficher_registres 'test)) ; R0 devrait valoir 11
-
-(test-exec)
+(defun vm_exec_inst_JNIL (vm label)
+  ;; Saute si le résultat était NIL (donc FEQ=1)
+  (vm_jmp_cond_helper vm 0 1 0 label))

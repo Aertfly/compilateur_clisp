@@ -22,12 +22,16 @@
     (t 
      (set-prop vm cible valeur))))
 
-(defun vm_jmp_cond_helper (vm val_flt val_feq val_fgt label)
+(defun vm_jmp_cond_helper (vm check_flt check_feq check_fgt label)
   (let ((flt (get-mem vm :FLT))
         (feq (get-mem vm :FEQ))
         (fgt (get-mem vm :FGT)))
     (cond 
-      ((or (= flt val_flt) (= feq val_feq) (= fgt val_fgt)) 
+      ((or 
+         (and (= check_flt 1) (= flt 1))
+         (and (= check_feq 1) (= feq 1))
+         (and (= check_fgt 1) (= fgt 1))
+       ) 
         (vm_exec_inst_JMP vm label))
     ))
 )
@@ -35,20 +39,14 @@
 ; Prend une valeur ou un registre, retourne la valeur (:CONST 4 -> 4, :REF R4 -> valeur stockée dans le registre R4)
 (defun read_value (vm val)
   (cond
-    ((integerp val)
-      ;; 1. Si c'est un entier -> Adresse mémoire
-     (get-mem vm val))
-
-    ((symbolp val) (get-prop vm val))
-
+    ((integerp val) (get-mem vm val)) ; Adresse directe
+    ((symbolp val) (get-prop vm val)) ; Registre
     ((listp val)
-      ;; 2. Si c'est une liste -> On regarde le premier élément
      (case (first val)
-       (:CONST (second val))             ; Valeur brute
-       (:REF   (get-mem vm (second val))) ; Soit un registre soit une étiquette
-       (t (error "Type d'opérande inconnu : ~S" val))))
-
-    (t (error "Argument invalide (ni entier ni liste) : ~S" val))))
+       (:CONST (second val))
+       ;; Pour :REF et +, on délègue à resolve_addr pour trouver l'adresse, puis on lit
+       (t (get-mem vm (resolve_addr vm val)))))
+    (t (error "Val invalide : ~S" val))))
 
 (defun afficher_registres (vm)
   (format t "~%=== État de la VM : ~S ===~%" vm)
