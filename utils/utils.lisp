@@ -15,9 +15,12 @@
   )
 )
 
-(defun set-mem (vm registre valeur) ; A tester
-  (set-prop vm registre valeur))
-
+(defun set-mem (vm cible valeur) ; variable_cible = valeur
+  (cond 
+    ((integerp cible) 
+     (setf (aref (get-prop vm :mem) cible) valeur)) 
+    (t 
+     (set-prop vm cible valeur))))
 
 (defun vm_jmp_cond_helper (vm val_flt val_feq val_fgt label)
   (let ((flt (get-mem vm :FLT))
@@ -35,6 +38,8 @@
     ((integerp val)
       ;; 1. Si c'est un entier -> Adresse mémoire
      (get-mem vm val))
+
+    ((symbolp val) (get-prop vm val))
 
     ((listp val)
       ;; 2. Si c'est une liste -> On regarde le premier élément
@@ -64,7 +69,7 @@
           (get-prop vm :LC))
   
   ;; Comparaisons (Flags)
-  (format t " [Drapeaux]  FLT: ~A | FEQ: ~A | FGT: ~A~%"
+  (format t " [Drapeaux]  FLT:   ~A | FEQ:   ~A | FGT: ~A~%"
           (get-prop vm :FLT)
           (get-prop vm :FEQ)
           (get-prop vm :FGT))
