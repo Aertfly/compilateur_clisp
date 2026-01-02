@@ -1,7 +1,7 @@
 (require "utils/utils.lisp")
 
 ;Structure Mémoire : avec le code=Array et la pile=Array et stackpointer basepointer ? 
-(defun make_vm (name size)
+(defun vm_make (name size)
     (set-prop name :name name)
 
     ; Registre
@@ -32,7 +32,7 @@
     'ok ;Retourne la string "ok"
 )
 
-(defun vm_exec (vm) ; exécution de la VM : boucle principale
+(defun vm_run (vm) ; exécution de la VM : boucle principale
   (loop
     (let* ((pc (get-prop vm :PC))
           (inst (get-mem vm pc))) ; On récupère la valeur du compteur ordinal, puis on stocke dans inst l'instruction à l'emplacement mémoire correspondant
@@ -94,7 +94,7 @@
 )
 
 ; 
-(defun vm_load (vm code-list)
+(defun vm_load (code-list vm)
   (let ((addr 0))
     (dolist (inst code-list)
       (if (eq (first inst) 'LABEL) ; On est dans le cas LABEL avec (second inst) qui est le nom du label

@@ -1,7 +1,7 @@
 (require "vm.lisp")
 
 (defun test-coverage-ultimate ()
-  (make_vm 'ultimate-vm 500)
+  (vm_make 'ultimate-vm 500)
   
   (let ((code 
     '(
@@ -105,8 +105,8 @@
     )))
 
     (format t "~%--- DÉBUT DU TEST ULTIME (State Machine) ---~%")
-    (vm_load 'ultimate-vm code)
-    (vm_exec 'ultimate-vm)
+    (vm_load code 'ultimate-vm)
+    (vm_run 'ultimate-vm)
     (afficher_registres 'ultimate-vm)
     
     (let ((res (get-prop 'ultimate-vm :R0)))
