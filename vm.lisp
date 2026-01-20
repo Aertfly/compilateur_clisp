@@ -42,8 +42,11 @@
       (if 
         (or 
           (null inst) ; cas où pas d'instruction
+          (not (listp inst)) ; protection contre les données brutes
           (eq (first inst) 'HALT)) ; cas où instruction HALT
         (progn 
+          (unless (or (null inst) (eq (first inst) 'HALT))
+            (format t "Erreur : Instruction invalide en ~D : ~S~%" pc inst))
           (format t "Fin execution~%")
           (return 'DONE)))
 
