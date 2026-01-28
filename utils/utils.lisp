@@ -74,3 +74,9 @@
           
   (format t "=============================~%")
   (values)) ;; Retourne rien de spécifique pour ne pas polluer l'affichage
+
+(defun write_value (vm dest val)
+  (let ((target (if (listp dest) (resolve_addr vm dest) dest)))
+    (if (symbolp target)
+        (set-prop vm target val)
+        (set-mem vm target val))))

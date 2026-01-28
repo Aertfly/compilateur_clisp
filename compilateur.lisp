@@ -7,16 +7,35 @@
         ; cas 2 arguments
         (append 
           (compilation arg1)
-          '((PUSH :R0))
-          (compilation arg2)
-          '((POP :R1))
+          '((PUSH :R0))      ; On sauve le résultat de arg1 sur la pile
+          (compilation arg2) ; On calcule arg2, le résultat finit dans :R0
+          '((MOVE :R0 :R1))  ; On déplace arg2 dans :R1
+          '((POP :R0))       ; On récupère arg1 dans :R0
           (case op
             (+ '((ADD :R1 :R0)))
-            (- '((SUB :R0 :R1) (MOVE :R1 :R0)))
+            (- '((SUB :R1 :R0)))
             (* '((MUL :R1 :R0)))
-            (/ '((DIV :R0 :R1) (MOVE :R1 :R0)))))
+            (/ '((DIV :R1 :R0)))))
         ; cas >2 arguments
         (compilation `(,op (,op ,arg1 ,arg2) ,@reste)))))
+
+(defun compilation-fun (exp)
+  (let ((nom-fonc (car exp))
+        (args (cdr exp))
+        (code '()))
+    
+    (dolist (arg args)
+      (setf code (append code (compilation arg))) ; résultats dans r0
+      (setf code (append code '((PUSH :R0)))))
+
+    (setf code (append code `((JSR ,nom-fonc)))) ; tous les arguments empilés, on fait l'appel
+
+    (let ((nb-args (length args)))
+      (when (> nb-args 0)
+        (setf code (append code `((SUB (:CONST ,nb-args) :SP))))))
+
+    code))
+
 
 (defun compilation-comp (exp)
   (let* ((op (car exp))

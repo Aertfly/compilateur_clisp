@@ -128,8 +128,10 @@
 ; Manipulation mémoire/registres
 ; charge une addr dans la pile dans un registre
 (defun vm_exec_inst_LOAD (vm src dest) 
-  (set-prop vm dest (read_value vm (resolve_addr vm src))) 
-)
+  (let ((val (get-mem vm (resolve_addr vm src)))) ; On lit dans la mémoire à l'adresse calculée
+    (if (symbolp dest)
+        (set-prop vm dest val)   ; Si dest est :R0, on écrit dans le registre
+        (set-mem vm dest val)))) ; Sinon on écrit en mémoire
 
 ; charge une valeur dans un registre dans une addr sur la pile
 (defun vm_exec_inst_STORE (vm src dest) 
@@ -138,27 +140,22 @@
 
 (defun vm_exec_inst_MOVE (vm src dest) 
   (let ((val (read_value vm src))
-        ;; Si dest est une liste (ex: (:REF :SP) ou (+ :FP 1)), on calcule l'adresse réelle.
-        ;; Sinon (ex: :R0), on garde le symbole.
         (target (if (listp dest) (resolve_addr vm dest) dest)))
-    (set-mem vm target val))
-)
+    (if (symbolp target)
+        (set-prop vm target val)
+        (set-mem vm target val))))
 
 (defun vm_exec_inst_ADD (vm src dest) ; DEST += SRC
-  (set-mem vm dest (+ (read_value vm src) (read_value vm dest)))
-)
+  (write_value vm dest (+ (read_value vm src) (read_value vm dest))))
 
 (defun vm_exec_inst_SUB (vm src dest) ; DEST -= SRC
-  (set-mem vm dest (- (read_value vm dest) (read_value vm src)))
-)
+  (write_value vm dest (- (read_value vm dest) (read_value vm src))))
 
 (defun vm_exec_inst_MUL (vm src dest) ; DEST *= SRC
-  (set-mem vm dest (* (read_value vm src) (read_value vm dest)))
-)
+  (write_value vm dest (* (read_value vm src) (read_value vm dest))))
 
 (defun vm_exec_inst_DIV (vm src dest) ; DEST /= SRC
-  (set-mem vm dest (/ (read_value vm dest) (read_value vm src)))
-)
+  (write_value vm dest (/ (read_value vm dest) (read_value vm src))))
 
 (defun vm_exec_inst_INCR (vm dest)
   (let ((target (if (listp dest) (resolve_addr vm dest) dest)))
@@ -189,12 +186,10 @@
 
 ; Appels et retours
 (defun vm_exec_inst_JSR (vm label)
-  ;; On empile PC et FP comme des CONSTANTES brutes
   (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
   (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
   (set-prop vm :FP (get-prop vm :SP))
-  (vm_exec_inst_JMP vm label)
-)
+  (vm_exec_inst_JMP vm label))
 
 (defun vm_exec_inst_RTN (vm) 
   ;; 1. On vide la pile locale (SP revient à FP)
