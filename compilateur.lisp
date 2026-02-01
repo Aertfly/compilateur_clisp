@@ -45,7 +45,8 @@
         (corps (cdddr exp))
         (code '()))
     (setf code (append code `((LABEL ,nom))))
-    (let ((env (cons nil args))) 
+    ;; MODIF ICI : env est maintenant une liste de cadres ((nil . args))
+    (let ((env (list (cons nil args)))) 
       (dolist (e corps)
         (setf code (append code (compilation e env)))))
     (append code '((RTN)))))
@@ -102,22 +103,32 @@
 (defun compilation-let (exp env)
   (let* ((bindings (second exp))
          (corps (cddr exp))
-         (current-locals (if (consp env) (car env) nil)) 
-         (current-args (if (consp env) (cdr env) env)) ; Fallback si env malformé
-         (new-locals (copy-list current-locals)) 
+         ;; NOUVELLE GESTION DE L'ENVIRONNEMENT
+         ;; On récupère le cadre courant (le premier de la liste env)
+         (frame (if env (car env) (cons nil nil))) 
+         (current-locals (car frame))  ; Les locales actuelles
+         (current-args (cdr frame))    ; Les arguments actuels
+         (rest-env (cdr env))          ; Les cadres parents
+         
+         (new-locals current-locals)   ; On va ajouter les variables ici
          (code '()))
     
+    ;; 1. On compile les valeurs et on les empile (avec l'ancien environnement)
     (dolist (binding bindings)
       (setf code (append code (compilation (second binding) env)))
       (setf code (append code '((PUSH :R0)))))
     
+    ;; 2. On déclare les variables dans l'environnement du compilateur
     (dolist (binding bindings)
       (push (first binding) new-locals))
-    
-    (let ((new-env (cons new-locals current-args)))
+      
+    ;; 3. On crée le nouvel environnement pour le corps
+    ;; On remplace le premier cadre par le nouveau (avec new-locals)
+    (let ((new-env (cons (cons new-locals current-args) rest-env)))
       (dolist (e corps)
         (setf code (append code (compilation e new-env)))))
     
+    ;; 4. Nettoyage de la pile à la fin du let
     (let ((nb-vars (length bindings)))
       (when (> nb-vars 0)
         (setf code (append code `((SUB (:CONST ,nb-vars) :SP))))))
@@ -153,20 +164,18 @@
      '((MOVE (:CONST NIL) :R0)))))   ; Un while retourne NIL par défaut
 
 (defun compilation-setq (exp env)
-  (let* ((var (second exp))
-         (val-exp (third exp))
-         (locals (if (consp env) (car env) nil))
-         (args (if (consp env) (cdr env) env))
-         (pos-local (position var locals))
-         (pos-arg (position var args)))
+  (let ((var (second exp))
+        (val-exp (third exp)))
     (append
-     (compilation val-exp env) ; Le résultat de la nouvelle valeur est dans R0
-     (cond
-       (pos-local
-        `((STORE :R0 (+ :FP ,(- (length locals) pos-local)))))
-       (pos-arg
-        `((STORE :R0 (+ :FP ,(- 0 (+ 2 (- (length args) 1 pos-arg)))))))
-       (t (error "Variable inconnue pour SETQ : ~S" var))))))
+      (compilation val-exp env) ; Le résultat est dans R0
+      (let ((result (trouver-variable var env 0)))
+        (if result
+            (let ((depth (car result))
+                  (index (cdr result)))
+              ;; On génère un STORE vers l'adresse résolue (:VAR depth index)
+              ;; La VM utilisera resolve_addr pour trouver la bonne case mémoire
+              `((STORE :R0 (:VAR ,depth ,index))))
+            (error "Variable inconnue pour SETQ : ~S" var))))))
 
 (defun compilation-cons (exp env)
   (append 
@@ -241,10 +250,8 @@
          (corps (cddr exp))
          (label-fonc (gensym "LAMBDA"))
          (label-skip (gensym "SKIP"))
-         ;; On imite strictement la structure de compilation-defun
-         ;; env-lambda doit être une liste où le premier élément est NIL 
-         ;; et le reste de la liste sont les arguments.
-         (env-lambda (cons nil args-lambda))) 
+         ;; MODIF ICI : On ajoute le nouveau cadre en tête de l'env existant
+         (env-lambda (cons (cons nil args-lambda) env))) 
     (append
      `((JMP ,label-skip))
      `((LABEL ,label-fonc))
@@ -255,60 +262,74 @@
      `((LABEL ,label-skip))
      `((MOVE (:CONST ,label-fonc) :R0)))))
 
+(defun trouver-variable (var env depth)
+  (if (null env)
+      nil
+      (let* ((frame (car env))
+             (locals (car frame))
+             (args (cdr frame))
+             (pos-local (position var locals))
+             (pos-arg (position var args)))
+        (cond
+          (pos-local 
+           (cons depth (- (length locals) pos-local)))
+          (pos-arg
+           ;; MODIF ICI : On change le 2 en 3 car la pile a grossi (FP, PC, SL)
+           (cons depth (- 0 (+ 3 (- (length args) 1 pos-arg)))))
+          (t 
+           (trouver-variable var (cdr env) (+ 1 depth)))))))
+
 (defun compilation (exp &optional env)
-  (let ((locals (if (consp env) (car env) nil))
-        (args (if (consp env) (cdr env) env)))
-    (cond
-      ;; 1. TRAITEMENT DES CONSTANTES
-      ((null exp) `((MOVE (:CONST NIL) :R0))) 
-      ((eq exp t) `((MOVE (:CONST 1) :R0)))    
-      ((numberp exp) `((MOVE (:CONST ,exp) :R0)))
-      
-      ;; 2. TRAITEMENT DES SYMBOLES
-      ((symbolp exp) 
-       (let ((locals (car env))
-             (args (cdr env)))
-         (let ((pos-local (and locals (position exp locals))))
-           (if pos-local
-               `((LOAD (+ :FP ,(- (length locals) pos-local)) :R0))
-               (let ((pos-arg (and args (position exp args))))
-                 (if pos-arg
-                     `((LOAD (+ :FP ,(- 0 (+ 2 (- (length args) 1 pos-arg)))) :R0))
-                     (error "Variable inconnue : ~S (env était ~S, locals=~S, args=~S)" 
-                            exp env locals args)))))))
+  ;; Note : On a supprimé le let ((locals ...)) qui était ici car il est obsolète
+  (cond
+    ;; 1. CONSTANTES
+    ((null exp) `((MOVE (:CONST NIL) :R0))) 
+    ((eq exp t) `((MOVE (:CONST 1) :R0)))   
+    ((numberp exp) `((MOVE (:CONST ,exp) :R0)))
+    
+    ;; 2. SYMBOLES (VARIABLES) -- C'est ici que ça changeait
+    ((symbolp exp) 
+     (let ((result (trouver-variable exp env 0)))
+       (if result
+           (let ((depth (car result))
+                 (index (cdr result)))
+             ;; On génère l'accès avec la profondeur (:VAR depth index)
+             `((MOVE (:VAR ,depth ,index) :R0)))
+           (error "Variable inconnue : ~S" exp))))
 
-      ;; 3. TRAITEMENT DES FORMES IMBRIQUÉES
-      ((atom exp) `((MOVE ,exp :R0)))
-      
-      ((eq (car exp) 'defun) (compilation-defun exp))
-      ;; AJOUT DE LA LIGNE MANQUANTE ICI :
-      ((eq (car exp) 'lambda) (compilation-lambda exp env)) 
-      
-      ((eq (car exp) 'if)    (compilation-if exp env))
-      ((eq (car exp) 'let)   (compilation-let exp env))
-      ((eq (car exp) 'progn) (compilation-progn exp env))
-      ((eq (car exp) 'while) (compilation-while exp env))
-      ((eq (car exp) 'setq)  (compilation-setq exp env))
+    ;; 3. FORMES IMBRIQUÉES
+    ((atom exp) `((MOVE ,exp :R0)))
+    
+    ((eq (car exp) 'defun) (compilation-defun exp))
+    ((eq (car exp) 'lambda) (compilation-lambda exp env)) 
+    
+    ((eq (car exp) 'if)     (compilation-if exp env))
+    ((eq (car exp) 'let)    (compilation-let exp env))
+    ((eq (car exp) 'progn)  (compilation-progn exp env))
+    ((eq (car exp) 'while)  (compilation-while exp env))
+    ((eq (car exp) 'setq)   (compilation-setq exp env))
 
-      ;; Macros
-      ((eq (car exp) 'defmacro) (compilation-defmacro exp))
-      ((and (symbolp (car exp)) (get-defmacro (car exp)))
-       (compilation (expansion-macro exp) env))
-      ((and (consp exp) (eq (car exp) 'system::backquote))
-       (compilation (transformer-backquote (second exp)) env))
+    ;; Macros
+    ((eq (car exp) 'defmacro) (compilation-defmacro exp))
+    ((and (symbolp (car exp)) (get-defmacro (car exp)))
+     (compilation (expansion-macro exp) env))
+    ((and (consp exp) (eq (car exp) 'system::backquote))
+     (compilation (transformer-backquote (second exp)) env))
 
-      ;; Primitives
-      ((eq (car exp) 'cons)  (compilation-cons exp env))
-      ((eq (car exp) 'car)   (compilation-car exp env))
-      ((eq (car exp) 'cdr)   (compilation-cdr exp env))
-      ((eq (car exp) 'quote) (compilation-quote exp env))
-      
-      ;; Opérations
-      ((member (car exp) '(+ - * /)) (compilation-op exp env))
-      ((member (car exp) '(< > = <= >=)) (compilation-comp exp env))
-      
-      ;; Appel de fonction utilisateur (par défaut)
-      (t (compilation-fun exp env)))))
+    ;; Primitives
+    ((eq (car exp) 'cons)  (compilation-cons exp env))
+    ((eq (car exp) 'car)   (compilation-car exp env))
+    ((eq (car exp) 'cdr)   (compilation-cdr exp env))
+    ((eq (car exp) 'quote) (compilation-quote exp env))
+    ;; Ajout pour le debug
+    ((eq (car exp) 'print) `((PRIN (compilation (second exp) env)))) 
+    
+    ;; Opérations
+    ((member (car exp) '(+ - * /)) (compilation-op exp env))
+    ((member (car exp) '(< > = <= >=)) (compilation-comp exp env))
+    
+    ;; Appel de fonction utilisateur
+    (t (compilation-fun exp env))))
 
 (defun compiler-expression (exp)
   (append (compilation exp) '((HALT))))

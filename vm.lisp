@@ -119,33 +119,90 @@
   )
 )
 
-; 
-(defun vm_load (code-list vm)
-  (let ((addr 0))
-    (dolist (inst code-list)
-      (if (eq (first inst) 'LABEL) ; On est dans le cas LABEL avec (second inst) qui est le nom du label
-        (setf (gethash (second inst) (get-prop vm :labels)) addr)
-        (progn ; Pour exécuter plusieurs instructions
-          (set-mem vm addr inst)
-          (incf addr)
-        )
-      )
-    )
-  )
-)
+(defun resolve-argument (arg label-map)
+  "Si l'argument est un label connu, retourne son adresse. 
+   Gère aussi le cas (:CONST LABEL)."
+  (cond
+    ;; Cas 1 : L'argument est directement le label (ex: pour JMP LABEL)
+    ((and (symbolp arg) (gethash arg label-map))
+     (gethash arg label-map))
+     
+    ;; Cas 2 : L'argument est (:CONST LABEL) (ex: pour MOVE (:CONST LABEL) :R0)
+    ((and (listp arg) 
+          (eq (first arg) :CONST)
+          (symbolp (second arg)) 
+          (gethash (second arg) label-map))
+     (list :CONST (gethash (second arg) label-map)))
+     
+    ;; Cas 3 : Rien à changer
+    (t arg)))
 
+(defun vm_load (code-list vm)
+  (let ((addr 0)
+        (label-map (make-hash-table))
+        (resolved-code '()))
+    
+    ;; --- PASSE 1 : Repérage des Labels ---
+    ;; On compte les instructions "réelles" pour savoir où tombent les labels.
+    (dolist (inst code-list)
+      (if (eq (first inst) 'LABEL)
+          ;; Si c'est un label, on stocke sa position future (addr actuelle)
+          (setf (gethash (second inst) label-map) addr)
+          ;; Si c'est une vraie instruction, on incrémente le compteur d'adresse
+          (incf addr)))
+
+    ;; --- PASSE 2 : Résolution et Nettoyage ---
+    (dolist (inst code-list)
+      ;; On ignore les lignes LABEL, elles ne doivent pas être en mémoire
+      (unless (eq (first inst) 'LABEL)
+        (let ((op (first inst))
+              (args (rest inst))
+              (new-args nil))
+          
+          ;; Pour chaque argument de l'instruction, on regarde si c'est un label à remplacer
+          (setf new-args (mapcar (lambda (arg) (resolve-argument arg label-map)) args))
+          
+          ;; On reconstruit l'instruction avec les adresses (ex: (JMP 12) au lieu de (JMP :FIN))
+          (push (cons op new-args) resolved-code))))
+    
+    ;; On remet le code dans le bon ordre (car push inverse la liste)
+    (setf resolved-code (nreverse resolved-code))
+
+    ;; --- CHARGEMENT EN MÉMOIRE ---
+    (setf addr 0)
+    (dolist (inst resolved-code)
+      (set-mem vm addr inst)
+      (incf addr))
+    
+    ;; On stocke la table des labels dans la VM juste pour le debug (optionnel)
+    (set-prop vm :labels label-map)
+    (format t "~%[Loader] Code chargé et résolu (~D instructions).~%" addr)))
 
 (defun resolve_addr (vm src)
   (cond
     ((integerp src) src)
     ((listp src)
      (case (first src)
-       (:REF  (read_value vm (second src))) ; On lit la VALEUR du registre
-       (+     (let ((val-registre (read_value vm (second src))) ; On prend la valeur numérique (ex: 100)
-                    (offset (third src)))
-                (+ val-registre offset))) ; Résultat : 98
-       (t (error "Type d'opérande inconnu : ~S" src))))
-    (t (error "Argument invalide : ~S" src))))
+       (:REF  (read_value vm (second src)))
+       (+     (let ((val (read_value vm (second src))) (off (third src))) (+ val off)))
+       (:CONST (second src)) ;; Au cas où
+       
+       ;; --- GESTION DES VARIABLES LEXICALES ---
+       (:VAR  (let ((depth (second src))
+                    (index (third src))
+                    (current-fp (get-prop vm :FP)))
+                
+                ;; Boucle pour remonter les liens statiques
+                (dotimes (i depth)
+                  ;; On lit le Static Link stocké à l'adresse (FP - 2)
+                  ;; Attention : get-mem prend une adresse absolue.
+                  (setf current-fp (get-mem vm (- current-fp 2))))
+                
+                ;; Une fois au bon étage, on applique l'offset
+                (+ current-fp index)))
+       
+       (t (error "Type inconnu : ~S" src))))
+    (t (error "Arg invalide : ~S" src))))
 
 ; Manipulation mémoire/registres
 ; charge une addr dans la pile dans un registre
@@ -199,52 +256,44 @@
 ); On enlève la valeur puis on décrémente
 
 ; Labels/sauts 
-(defun vm_exec_inst_JMP (vm label)
-  ;; On récupère l'adresse associée au label dans la table
-  (let ((target-addr (gethash label (get-prop vm :labels))))
-    (if target-addr
-        (set-prop vm :PC target-addr) ; On met à jour le PC
-        (error "Erreur : Label inconnu ~S" label))))
+(defun vm_exec_inst_JMP (vm target)
+  (if (integerp target)
+      (set-prop vm :PC target)
+      (error "Erreur JMP : L'adresse ~S n'est pas un entier (Problème de résolution ?)" target)))
 
 ; Appels et retours
 (defun vm_exec_inst_JSR (vm cible)
-  ;; Étape 1 : Déterminer la valeur cible brute
-  (let ((valeur-brute 
-         (cond
-           ;; Cas 1 : C'est un registre (ex: :R0), on lit son contenu
-           ((keywordp cible) (read_value vm cible))
-           
-           ;; Cas 2 : C'est un label (ex: TEST-LAMBDA), on cherche son adresse
-           ((symbolp cible) (gethash cible (get-prop vm :labels)))
-           
-           ;; Cas 3 : Autre (adresse directe), on lit la valeur
-           (t (read_value vm cible)))))
-
-    ;; Étape 2 : Résolution finale (gestion des sauts indirects via labels)
-    ;; Si valeur-brute est un symbole (ex: on a lu #:LAMBDA... depuis :R0),
-    ;; il faut maintenant trouver l'adresse de ce symbole.
-    (let ((target-addr (if (symbolp valeur-brute)
-                           (gethash valeur-brute (get-prop vm :labels))
-                           valeur-brute))) ;; Sinon c'est déjà une adresse (entier)
-      
-      (if (and target-addr (integerp target-addr))
-          (progn
-            (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
-            (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
-            (set-prop vm :FP (get-prop vm :SP))
-            (set-prop vm :PC target-addr))
-          (error "JSR : Cible invalide ~S (Valeur résolue: ~S)" cible target-addr)))))
+  (let ((adresse-saut 
+          (cond 
+            ((integerp cible) cible)
+            ((keywordp cible) (read_value vm cible))
+            (t (error "JSR : Cible invalide ~S" cible)))))
+    
+    ;; 1. On empile le STATIC LINK (Le FP courant devient le parent du futur cadre)
+    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP))) 
+    
+    ;; 2. On empile le PC (Adresse de retour)
+    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
+    
+    ;; 3. On empile le DYNAMIC LINK (L'ancien FP)
+    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+    
+    ;; 4. Mise à jour des registres
+    (set-prop vm :FP (get-prop vm :SP))
+    (set-prop vm :PC adresse-saut)))
 
 (defun vm_exec_inst_RTN (vm) 
-  ;; 1. On vide la pile locale (SP revient à FP)
+  ;; 1. On ramène SP au niveau de FP (vide les locales)
   (set-prop vm :SP (get-prop vm :FP))
   
-  ;; 2. On restaure l'ancien FP
+  ;; 2. On restaure le FP (Lien Dynamique)
   (vm_exec_inst_POP vm :FP)
   
-  ;; 3. On restaure le PC (adresse de retour)
+  ;; 3. On restaure le PC (Adresse de retour)
   (vm_exec_inst_POP vm :PC)
-)
+  
+  ;; 4. On vire le Static Link (on le met dans une poubelle, ex: R2, car on n'en a plus besoin)
+  (vm_exec_inst_POP vm :R2))
 
 ; Comparaisons
 (defun vm_exec_inst_CMP (vm src1 src2)
