@@ -298,7 +298,7 @@
            (error "Variable inconnue : ~S" exp))))
 
     ;; 3. FORMES IMBRIQUÉES
-    ((atom exp) `((MOVE ,exp :R0)))
+    ((atom exp) `((MOVE (:CONST ,exp) :R0)))    
     
     ((eq (car exp) 'defun) (compilation-defun exp))
     ((eq (car exp) 'lambda) (compilation-lambda exp env)) 
@@ -322,7 +322,10 @@
     ((eq (car exp) 'cdr)   (compilation-cdr exp env))
     ((eq (car exp) 'quote) (compilation-quote exp env))
     ;; Ajout pour le debug
-    ((eq (car exp) 'print) `((PRIN (compilation (second exp) env)))) 
+    ((eq (car exp) 'print) 
+     (append 
+      (compilation (second exp) env) ;; On calcule ce qu'on veut afficher (résultat dans R0)
+      '((PRIN :R0))))                ;; On appelle l'instruction PRIN sur R0
     
     ;; Opérations
     ((member (car exp) '(+ - * /)) (compilation-op exp env))

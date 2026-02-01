@@ -1,7 +1,15 @@
-(defun TEST-LEXICAL ()
-  (let ((x 10))       ; x est déclaré dans l'environnement parent
-    ((lambda (y) 
-       (+ x y))       ; La lambda accède à x (profondeur 1) et y (profondeur 0)
-     5)))
+(defun fibo (n)
+  "Calcule le n-ième terme de la suite de Fibonacci de manière récursive."
+  (if (< n 2)
+      n
+      (+ (fibo (- n 1)) 
+         (fibo (- n 2)))))
 
-(TEST-LEXICAL)
+(defun factorielle (n)
+  "Calcule la factorielle de n."
+  (if (<= n 1)
+      1
+      (* n (factorielle (- n 1)))))
+
+(print (fibo 10))
+(print (factorielle 50))

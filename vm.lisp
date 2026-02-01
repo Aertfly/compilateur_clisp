@@ -36,15 +36,15 @@
   (loop
     (let* ((pc (get-prop vm :PC))
           (inst (get-mem vm pc))) ; On récupère la valeur du compteur ordinal, puis on stocke dans inst l'instruction à l'emplacement mémoire correspondant
-      (format t "Instruction en ~D : ~S~%" pc inst) ; Affichage de l'instruction
+      ; (format t "Instruction en ~D : ~S~%" pc inst) ; Affichage de l'instruction
 
       (when (not (listp inst))
         (format t "ERREUR FATALE : PC (~D) pointe sur une donnée brute : ~S~%" pc inst)
         (format t "Vérifiez qu'un HALT est bien présent avant cette adresse.~%")
         (return 'CRASH))
 
-      (if (or (null inst) (eq (first inst) 'HALT))
-          (progn (format t "Fin execution (HALT)~%") (return 'DONE)))
+      ;(if (or (null inst) (eq (first inst) 'HALT))
+      ;    (progn (format t "Fin execution (HALT)~%") (return 'DONE)))
 
       ; Arrêt de l'exécution
       (if 
@@ -55,7 +55,7 @@
         (progn 
           (unless (or (null inst) (eq (first inst) 'HALT))
             (format t "Erreur : Instruction invalide en ~D : ~S~%" pc inst))
-          (format t "Fin execution~%")
+          ; (format t "Fin execution~%")
           (return 'DONE)))
 
       (set-prop vm :PC (+ pc 1)) ; Incrémentation du compteur ordinal
@@ -113,6 +113,8 @@
                  (if (consp liste)
                      (set-prop vm :R0 (cdr liste))
                      (set-prop vm :R0 nil))))
+          ;
+          (PRIN (vm_exec_inst_PRIN vm (first args)))
         )      
       )
     )
@@ -176,7 +178,8 @@
     
     ;; On stocke la table des labels dans la VM juste pour le debug (optionnel)
     (set-prop vm :labels label-map)
-    (format t "~%[Loader] Code chargé et résolu (~D instructions).~%" addr)))
+    ;(format t "~%[Loader] Code chargé et résolu (~D instructions).~%" addr)))
+    ))
 
 (defun resolve_addr (vm src)
   (cond
@@ -344,3 +347,8 @@
 (defun vm_exec_inst_JNIL (vm label)
   ;; Saute si le résultat était NIL (donc FEQ=1)
   (vm_jmp_cond_helper vm 0 1 0 label))
+
+(defun vm_exec_inst_PRIN (vm src)
+  (let ((val (read_value vm src)))
+    (format t "~S~%" val) ;; Affiche la valeur suivie d'un saut de ligne
+    (set-prop vm :R0 val))) ;; PRIN retourne la valeur affichée (comme print en Lisp)
