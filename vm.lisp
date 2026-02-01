@@ -11,8 +11,8 @@
     (set-prop name :R3 0)
     
     ; Pile
-    (set-prop name :BP 100)
-    (set-prop name :SP 100)
+    (set-prop name :BP 500)
+    (set-prop name :SP 500)
     (set-prop name :FP 0)
     
     ; Comparaisons flag
@@ -37,6 +37,14 @@
     (let* ((pc (get-prop vm :PC))
           (inst (get-mem vm pc))) ; On récupère la valeur du compteur ordinal, puis on stocke dans inst l'instruction à l'emplacement mémoire correspondant
       (format t "Instruction en ~D : ~S~%" pc inst) ; Affichage de l'instruction
+
+      (when (not (listp inst))
+        (format t "ERREUR FATALE : PC (~D) pointe sur une donnée brute : ~S~%" pc inst)
+        (format t "Vérifiez qu'un HALT est bien présent avant cette adresse.~%")
+        (return 'CRASH))
+
+      (if (or (null inst) (eq (first inst) 'HALT))
+          (progn (format t "Fin execution (HALT)~%") (return 'DONE)))
 
       ; Arrêt de l'exécution
       (if 
@@ -116,13 +124,12 @@
   (cond
     ((integerp src) src)
     ((listp src)
-      (case (first src)
-        (:CONST (error "Pas de constante acceptée par load/store"))
-        (:REF   (get-mem vm (second src)))
-        (+      (let ((val-registre (get-mem vm (second src))) 
-                      (offset (third src)))                     
-                  (+ val-registre offset)))
-        (t (error "Type d'opérande inconnu : ~S" src))))
+     (case (first src)
+       (:REF  (read_value vm (second src))) ; On lit la VALEUR du registre
+       (+     (let ((val-registre (read_value vm (second src))) ; On prend la valeur numérique (ex: 100)
+                    (offset (third src)))
+                (+ val-registre offset))) ; Résultat : 98
+       (t (error "Type d'opérande inconnu : ~S" src))))
     (t (error "Argument invalide : ~S" src))))
 
 ; Manipulation mémoire/registres
