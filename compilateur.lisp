@@ -20,16 +20,20 @@
         (compilation `(,op (,op ,arg1 ,arg2) ,@reste) env))))
 
 (defun compilation-fun (exp &optional env)
-  (let ((nom-fonc (car exp))
+  (let ((nom-ou-exp (car exp))
         (args (cdr exp))
         (code '()))
-
+    ;; 1. Empiler les arguments
     (dolist (arg args)
-      (setf code (append code (compilation arg env))) 
+      (setf code (append code (compilation arg env)))
       (setf code (append code '((PUSH :R0)))))
-
-    (setf code (append code `((JSR ,nom-fonc)))) 
-
+    ;; 2. Appel
+    (if (symbolp nom-ou-exp)
+        (setf code (append code `((JSR ,nom-ou-exp))))
+        (setf code (append code 
+                           (compilation nom-ou-exp env) ;; Calcul de l'adresse -> R0
+                           `((JSR :R0)))))              ;; Appel indirect
+    ;; 3. Nettoyage
     (let ((nb-args (length args)))
       (when (> nb-args 0)
         (setf code (append code `((SUB (:CONST ,nb-args) :SP))))))
@@ -80,19 +84,19 @@
 (defun compilation-if (exp env)
   (let ((condition (second exp))
         (alors (third exp))
-        (sinon (fourth exp)) ; Sera NIL si absent
+        (sinon (fourth exp))
         (label-sinon (gensym "ELSE"))
         (label-fin (gensym "ENDIF")))
     (append
      (compilation condition env) 
-     `((TEST :R0))               
-     `((JNIL ,label-sinon))      
+     '((TEST :R0))               ;; Positionne les flags selon R0
+     `((JEQ ,label-sinon))       ;; Si FEQ=1 (donc R0 était NIL/0), on saute au SINON
      (compilation alors env)     
      `((JMP ,label-fin))
      `((LABEL ,label-sinon))
      (if sinon 
-         (compilation sinon env) ; On compile le sinon s'il existe
-         '((MOVE (:CONST NIL) :R0))) ; Sinon on retourne NIL par défaut
+         (compilation sinon env)
+         '((MOVE (:CONST NIL) :R0)))
      `((LABEL ,label-fin)))))
 
 (defun compilation-let (exp env)
@@ -119,34 +123,191 @@
         (setf code (append code `((SUB (:CONST ,nb-vars) :SP))))))
     code))
 
+(defun compilation-progn (exp env)
+  (let ((expressions (cdr exp)) ; On retire le symbole 'progn
+        (code '()))
+    (if (null expressions)
+        '((MOVE (:CONST NIL) :R0)) ; Un progn vide retourne NIL
+        (progn
+          (dolist (e expressions)
+            (setf code (append code (compilation e env))))
+          code))))
+
+(defun compilation-while (exp env)
+  (let ((condition (second exp))
+        (corps (cddr exp))
+        (label-test (gensym "WTEST"))
+        (label-end (gensym "WEND")))
+    (append
+     `((LABEL ,label-test))
+     (compilation condition env)     ; On évalue la condition
+     `((TEST :R0))                   ; On vérifie si c'est vrai (non-NIL/non-0)
+     `((JNIL ,label-end))            ; Si faux, on saute à la fin
+     ;; On compile le corps du while (comme un progn)
+     (let ((code-corps '()))
+       (dolist (e corps)
+         (setf code-corps (append code-corps (compilation e env))))
+       code-corps)
+     `((JMP ,label-test))            ; On boucle
+     `((LABEL ,label-end))
+     '((MOVE (:CONST NIL) :R0)))))   ; Un while retourne NIL par défaut
+
+(defun compilation-setq (exp env)
+  (let* ((var (second exp))
+         (val-exp (third exp))
+         (locals (if (consp env) (car env) nil))
+         (args (if (consp env) (cdr env) env))
+         (pos-local (position var locals))
+         (pos-arg (position var args)))
+    (append
+     (compilation val-exp env) ; Le résultat de la nouvelle valeur est dans R0
+     (cond
+       (pos-local
+        `((STORE :R0 (+ :FP ,(- (length locals) pos-local)))))
+       (pos-arg
+        `((STORE :R0 (+ :FP ,(- 0 (+ 2 (- (length args) 1 pos-arg)))))))
+       (t (error "Variable inconnue pour SETQ : ~S" var))))))
+
+(defun compilation-cons (exp env)
+  (append 
+    (compilation (caddr exp) env) ; Compile le 2ème arg (CDR)
+    '((PUSH :R0))                 ; Sauve sur la pile
+    (compilation (cadr exp) env)  ; Compile le 1er arg (CAR)
+    '((POP :R1))                  ; Récupère le CDR dans R1
+    '((CONS :R0 :R1))))           ; R0 = (cons R0 R1)
+
+(defun compilation-car (exp env)
+  (append 
+    (compilation (cadr exp) env)
+    '((CAR :R0))))
+
+(defun compilation-cdr (exp env)
+  (append 
+    (compilation (cadr exp) env)
+    '((CDR :R0))))
+
+(defun compilation-quote (exp env)
+  ;; L'argument de quote est (cadr exp)
+  ;; On génère un MOVE direct de la constante vers R0
+  `((MOVE (:CONST ,(cadr exp)) :R0)))
+
+(defvar *macros-table* (make-hash-table))
+
+(defun get-defmacro (nom)
+  (gethash nom *macros-table*))
+
+(defun set-defmacro (nom fonction)
+  (setf (gethash nom *macros-table*) fonction))
+
+(defun compilation-defmacro (exp)
+  (let ((nom (second exp))
+        (args (third exp))
+        (corps (cdddr exp)))
+    ;; On crée une fonction Lisp réelle qui prend les arguments de la macro
+    ;; et retourne la forme expansée.
+    (set-defmacro nom 
+                  (eval `(lambda ,args (progn ,@corps))))
+    ;; Une définition de macro ne produit pas de code exécutable par la VM
+    nil))
+
+(defun expansion-macro (exp)
+  (let ((macro-fun (get-defmacro (car exp))))
+    (if macro-fun
+        ;; On applique la fonction de la macro aux arguments (non évalués !)
+        (apply macro-fun (cdr exp))
+        exp)))
+
+(defun transformer-backquote (exp)
+  (cond
+    ;; Si c'est un atome, on le quote pour qu'il reste tel quel
+    ((atom exp) (list 'quote exp))
+    
+    ;; Détection de la virgule (unquote) : CLISP utilise SYSTEM::UNQUOTE
+    ((eq (car exp) 'system::unquote)
+     (second exp))
+    
+    ;; Détection de la virgule-arobase (splice) : SYSTEM::SPLICE
+    ;; On utilise APPEND pour fusionner la liste résultante
+    ((and (consp (car exp)) (eq (caar exp) 'system::splice))
+     (list 'append (second (car exp)) (transformer-backquote (cdr exp))))
+    
+    ;; Cas récursif standard
+    (t (list 'cons 
+             (transformer-backquote (car exp)) 
+             (transformer-backquote (cdr exp))))))
+
+(defun compilation-lambda (exp env)
+  (let* ((args-lambda (second exp))
+         (corps (cddr exp))
+         (label-fonc (gensym "LAMBDA"))
+         (label-skip (gensym "SKIP"))
+         ;; On imite strictement la structure de compilation-defun
+         ;; env-lambda doit être une liste où le premier élément est NIL 
+         ;; et le reste de la liste sont les arguments.
+         (env-lambda (cons nil args-lambda))) 
+    (append
+     `((JMP ,label-skip))
+     `((LABEL ,label-fonc))
+     (let ((code-corps '()))
+       (dolist (e corps)
+         (setf code-corps (append code-corps (compilation e env-lambda))))
+       (append code-corps '((RTN))))
+     `((LABEL ,label-skip))
+     `((MOVE (:CONST ,label-fonc) :R0)))))
+
 (defun compilation (exp &optional env)
   (let ((locals (if (consp env) (car env) nil))
         (args (if (consp env) (cdr env) env)))
     (cond
+      ;; 1. TRAITEMENT DES CONSTANTES
+      ((null exp) `((MOVE (:CONST NIL) :R0))) 
+      ((eq exp t) `((MOVE (:CONST 1) :R0)))    
       ((numberp exp) `((MOVE (:CONST ,exp) :R0)))
       
+      ;; 2. TRAITEMENT DES SYMBOLES
       ((symbolp exp) 
-       ;; CAS 1 : C'est une variable locale (LET)
-       (let ((pos-local (position exp locals)))
-         (if pos-local
-             ;; Formule locale : FP + (taille - pos)
-             `((LOAD (+ :FP ,(- (length locals) pos-local)) :R0))
-             
-             ;; CAS 2 : C'est un argument de fonction
-             (let ((pos-arg (position exp args)))
-               (if pos-arg
-                   ;; Formule argument : FP - (2 + (nb_args - 1 - pos))
-                   ;; On recule de 2 (PC+FP) puis on remonte dans les args
-                   `((LOAD (+ :FP ,(- 0 (+ 2 (- (length args) 1 pos-arg)))) :R0))
-                   
-                   (error "Variable inconnue : ~S" exp))))))
+       (let ((locals (car env))
+             (args (cdr env)))
+         (let ((pos-local (and locals (position exp locals))))
+           (if pos-local
+               `((LOAD (+ :FP ,(- (length locals) pos-local)) :R0))
+               (let ((pos-arg (and args (position exp args))))
+                 (if pos-arg
+                     `((LOAD (+ :FP ,(- 0 (+ 2 (- (length args) 1 pos-arg)))) :R0))
+                     (error "Variable inconnue : ~S (env était ~S, locals=~S, args=~S)" 
+                            exp env locals args)))))))
 
+      ;; 3. TRAITEMENT DES FORMES IMBRIQUÉES
       ((atom exp) `((MOVE ,exp :R0)))
+      
       ((eq (car exp) 'defun) (compilation-defun exp))
-      ((eq (car exp) 'if) (compilation-if exp env))
-      ((eq (car exp) 'let) (compilation-let exp env))
+      ;; AJOUT DE LA LIGNE MANQUANTE ICI :
+      ((eq (car exp) 'lambda) (compilation-lambda exp env)) 
+      
+      ((eq (car exp) 'if)    (compilation-if exp env))
+      ((eq (car exp) 'let)   (compilation-let exp env))
+      ((eq (car exp) 'progn) (compilation-progn exp env))
+      ((eq (car exp) 'while) (compilation-while exp env))
+      ((eq (car exp) 'setq)  (compilation-setq exp env))
+
+      ;; Macros
+      ((eq (car exp) 'defmacro) (compilation-defmacro exp))
+      ((and (symbolp (car exp)) (get-defmacro (car exp)))
+       (compilation (expansion-macro exp) env))
+      ((and (consp exp) (eq (car exp) 'system::backquote))
+       (compilation (transformer-backquote (second exp)) env))
+
+      ;; Primitives
+      ((eq (car exp) 'cons)  (compilation-cons exp env))
+      ((eq (car exp) 'car)   (compilation-car exp env))
+      ((eq (car exp) 'cdr)   (compilation-cdr exp env))
+      ((eq (car exp) 'quote) (compilation-quote exp env))
+      
+      ;; Opérations
       ((member (car exp) '(+ - * /)) (compilation-op exp env))
       ((member (car exp) '(< > = <= >=)) (compilation-comp exp env))
+      
+      ;; Appel de fonction utilisateur (par défaut)
       (t (compilation-fun exp env)))))
 
 (defun compiler-expression (exp)

@@ -98,6 +98,21 @@
           ;
           ; NOP : rien à faire
           ; HALT : déjà traité plus haut
+          ;
+          ; Gestion des listes 
+          (CONS (let ((val2 (read_value vm (second args)))  ; Le CDR est souvent sur la pile ou R1
+                      (val1 (read_value vm (first args))))  ; Le CAR
+                  (set-prop vm :R0 (cons val1 val2))))
+
+          (CAR (let ((liste (read_value vm (first args))))
+                 (if (consp liste)
+                     (set-prop vm :R0 (car liste))
+                     (set-prop vm :R0 nil))))
+
+          (CDR (let ((liste (read_value vm (first args))))
+                 (if (consp liste)
+                     (set-prop vm :R0 (cdr liste))
+                     (set-prop vm :R0 nil))))
         )      
       )
     )
@@ -192,11 +207,33 @@
         (error "Erreur : Label inconnu ~S" label))))
 
 ; Appels et retours
-(defun vm_exec_inst_JSR (vm label)
-  (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
-  (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
-  (set-prop vm :FP (get-prop vm :SP))
-  (vm_exec_inst_JMP vm label))
+(defun vm_exec_inst_JSR (vm cible)
+  ;; Étape 1 : Déterminer la valeur cible brute
+  (let ((valeur-brute 
+         (cond
+           ;; Cas 1 : C'est un registre (ex: :R0), on lit son contenu
+           ((keywordp cible) (read_value vm cible))
+           
+           ;; Cas 2 : C'est un label (ex: TEST-LAMBDA), on cherche son adresse
+           ((symbolp cible) (gethash cible (get-prop vm :labels)))
+           
+           ;; Cas 3 : Autre (adresse directe), on lit la valeur
+           (t (read_value vm cible)))))
+
+    ;; Étape 2 : Résolution finale (gestion des sauts indirects via labels)
+    ;; Si valeur-brute est un symbole (ex: on a lu #:LAMBDA... depuis :R0),
+    ;; il faut maintenant trouver l'adresse de ce symbole.
+    (let ((target-addr (if (symbolp valeur-brute)
+                           (gethash valeur-brute (get-prop vm :labels))
+                           valeur-brute))) ;; Sinon c'est déjà une adresse (entier)
+      
+      (if (and target-addr (integerp target-addr))
+          (progn
+            (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
+            (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+            (set-prop vm :FP (get-prop vm :SP))
+            (set-prop vm :PC target-addr))
+          (error "JSR : Cible invalide ~S (Valeur résolue: ~S)" cible target-addr)))))
 
 (defun vm_exec_inst_RTN (vm) 
   ;; 1. On vide la pile locale (SP revient à FP)
@@ -211,21 +248,23 @@
 
 ; Comparaisons
 (defun vm_exec_inst_CMP (vm src1 src2)
-; alloue respectivement les registres FLT, FEQ, FGT à 1 pour celui qui est vrai, 0 pour les autres. Par ex si src1 > src2, on a 001
-  (let 
-    ((val1 (read_value vm src1)) 
-    (val2 (read_value vm src2)))
-
+  (let ((val1 (read_value vm src1))
+        (val2 (read_value vm src2)))
+    ;; Réinitialisation des drapeaux
     (set-mem vm :FLT 0)
     (set-mem vm :FEQ 0)
     (set-mem vm :FGT 0)
-
     (cond
-      ((< val1 val2) (set-mem vm :FLT 1))
-      ((= val1 val2) (set-mem vm :FEQ 1))
-      ((> val1 val2) (set-mem vm :FGT 1)))
-  )
-)
+      ;; Cas numérique : on peut utiliser < et >
+      ((and (numberp val1) (numberp val2))
+       (cond
+         ((< val1 val2) (set-mem vm :FLT 1))
+         ((= val1 val2) (set-mem vm :FEQ 1))
+         ((> val1 val2) (set-mem vm :FGT 1))))
+      ;; Cas non-numérique (Listes, NIL, Symboles) : Seule l'égalité fait sens
+      (t
+       (if (equal val1 val2)
+           (set-mem vm :FEQ 1))))))
 
 (defun vm_exec_inst_JGT (vm label) (vm_jmp_cond_helper vm 0 0 1 label))
 
@@ -242,17 +281,12 @@
 ; Tests logiques
 (defun vm_exec_inst_TEST (vm src)
   (let ((val (read_value vm src)))
-    ;; CORRECTION : On considère comme FAUX si val est NIL *ou* si val est 0
-    (let ((is-false (or (null val) (and (numberp val) (= val 0)))))
-      
-      ;; Si c'est Faux (NIL ou 0), on active FEQ (utilisé par JNIL)
-      (set-mem vm :FEQ (if is-false 1 0))
-      
-      ;; On nettoie FLT (non utilisé par TEST logique habituellement, mais pour être propre)
-      (set-mem vm :FLT 0)
-      
-      ;; Si c'est Vrai (pas NIL et pas 0), on active FGT (utilisé par JTRUE)
-      (set-mem vm :FGT (if is-false 0 1)))))
+    (set-mem vm :FEQ 0)
+    (set-mem vm :FGT 0)
+    ;; Si la valeur est NIL ou 0, c'est FAUX -> on active FEQ (pour JNIL)
+    (if (or (null val) (and (numberp val) (= val 0)))
+        (set-mem vm :FEQ 1)  ;; Signal pour JNIL
+        (set-mem vm :FGT 1)))) ;; Signal pour JTRUE / IF
 
 (defun vm_exec_inst_JTRUE (vm label)
   ;; Saute si le résultat n'était pas NIL (donc FGT=1 selon la logique ci-dessus)
