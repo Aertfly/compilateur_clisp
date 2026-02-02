@@ -371,5 +371,3 @@
       
       ;; 4. Affichage du résultat
       (print (get-prop 'vm :R0)))))
-
-(executer-cible)

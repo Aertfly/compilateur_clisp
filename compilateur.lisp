@@ -350,7 +350,7 @@
     
     ;; 2. Assemblage du code final
     (let ((code-final (append '((JMP :START)) 
-                              code-functions      
+                              code-functions       
                               '((LABEL :START)) 
                               expressions-main   
                               '((HALT)))))
@@ -360,8 +360,12 @@
                            :direction :output
                            :if-exists :supersede
                            :if-does-not-exist :create)
-        (dolist (ins code-final)
-          (print ins out)))
+        ;; --- CORRECTION ICI ---
+        ;; On demande à Lisp d'écrire les gensyms (ex: #:FALSE123) 
+        ;; simplement comme des symboles normaux (ex: FALSE123).
+        (let ((*print-gensym* nil)) 
+          (dolist (ins code-final)
+            (print ins out))))
       
       ;; On retourne la liste pour que la VM puisse l'utiliser
       code-final)))

@@ -9,5 +9,4 @@
       1
       (* n (factorielle (- n 1)))))
 
-(print (fibo 10))
-(print (factorielle 50))
+(factorielle 50)

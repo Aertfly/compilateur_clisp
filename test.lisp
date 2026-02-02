@@ -1,14 +1,18 @@
 (require "vm.lisp")
-(load "compilateur.lisp")
+(require "compilateur.lisp")
 
-(defun executer-source (nom-fichier)
-  (vm_make 'vm 5000)
-  
-  (let ((code (compiler-fichier nom-fichier)))
-    (vm_load code 'vm)
-    
-    (vm_run 'vm)
-    
-    (print (get-prop 'vm :R0))))
-    
-(executer-source "code.lisp")
+(defmacro chronometre (expression)
+  (let ((debut (gensym)))
+    `(let ((,debut (get-internal-real-time))
+           (resultat ,expression))
+       (format t "~&[Chrono] ~5F s | ~A~%" 
+               (/ (- (get-internal-real-time) ,debut) (float internal-time-units-per-second))
+               ',expression)
+       resultat)))
+
+(defun test ()
+  (compiler-fichier)
+  (chronometre (executer-cible)) ; Exécution dans la VM
+  (chronometre (eval (with-open-file (in "code.lisp") (read in))))) ; Exécution native
+
+(test)
