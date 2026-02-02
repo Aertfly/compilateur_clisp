@@ -150,14 +150,37 @@
       (error "Erreur JMP : Adresse ~S invalide" target)))
 
 (defun vm_exec_inst_JSR (vm cible)
-  (let ((adresse-saut (cond ((integerp cible) cible)
-                            ((keywordp cible) (read_value vm cible))
-                            (t (error "JSR : Cible invalide ~S" cible)))))
-    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
-    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
-    (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
-    (set-prop vm :FP (get-prop vm :SP))
-    (set-prop vm :PC adresse-saut)))
+  (cond
+    ;; Cas 1: Adresse numérique -> saut normal
+    ((integerp cible)
+     (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+     (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
+     (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+     (set-prop vm :FP (get-prop vm :SP))
+     (set-prop vm :PC cible))
+    
+    ;; Cas 2: Registre contenant une adresse
+    ((keywordp cible)
+     (let ((addr (read_value vm cible)))
+       (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+       (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :PC)))
+       (vm_exec_inst_PUSH vm (list :CONST (get-prop vm :FP)))
+       (set-prop vm :FP (get-prop vm :SP))
+       (set-prop vm :PC addr)))
+    
+    ;; Cas 3: Symbole -> délégation à Lisp (append, length, etc.)
+    ((symbolp cible)
+     (if (fboundp cible)
+         ;; Le nombre d'args est au sommet de la pile
+         (let* ((sp (get-prop vm :SP))
+                (n-args (get-mem vm sp))
+                ;; Les args sont juste en dessous du compteur
+                (args (loop for i from 1 to n-args
+                            collect (get-mem vm (- sp i)))))
+           (set-prop vm :R0 (apply cible (nreverse args))))
+         (error "JSR : Fonction Lisp inconnue ~S" cible)))
+    
+    (t (error "JSR : Cible invalide ~S" cible))))
 
 (defun vm_exec_inst_RTN (vm)
   (set-prop vm :SP (get-prop vm :FP))

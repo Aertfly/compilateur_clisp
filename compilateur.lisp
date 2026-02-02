@@ -16,10 +16,13 @@
   (let ((nom (car exp)) (args (cdr exp)))
     (append (loop for arg in args
                   append (append (compilation arg env) '((PUSH :R0))))
+            ;; Empile le nombre d'arguments pour que la VM puisse les récupérer
+            (list (list 'PUSH (list :CONST (length args))))
             (if (symbolp nom)
                 (list (list 'JSR nom))
                 (append (compilation nom env) '((JSR :R0))))
-            (when args (list (list 'SUB (list :CONST (length args)) :SP))))))
+            ;; Nettoie la pile: args + compteur
+            (list (list 'SUB (list :CONST (1+ (length args))) :SP)))))
 
 (defun compilation-defun (exp)
   (let ((nom (second exp)) (args (third exp)) (corps (cdddr exp)))
