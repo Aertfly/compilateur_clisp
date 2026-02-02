@@ -155,6 +155,27 @@
 (defun compilation-cdr (exp env)
   (append (compilation (cadr exp) env) '((CDR :R0))))
 
+(defun compilation-cond (exp env)
+  (labels ((build (clauses)
+             (if (null clauses)
+                 nil
+                 (let ((c (car clauses)))
+                   (if (eq (car c) t)
+                       `(progn ,@(cdr c))
+                       `(if ,(car c) (progn ,@(cdr c)) ,(build (cdr clauses))))))))
+    (compilation (build (cdr exp)) env)))
+
+(defun compilation-case (exp env)
+  (let ((key-var (gensym "KEY")))
+    (labels ((build (clauses)
+               (if (null clauses)
+                   nil
+                   (let ((c (car clauses)))
+                     (if (member (car c) '(t otherwise))
+                         `(progn ,@(cdr c))
+                         `(if (= ,key-var ,(car c)) (progn ,@(cdr c)) ,(build (cdr clauses))))))))
+      (compilation `(let ((,key-var ,(cadr exp))) ,(build (cddr exp))) env))))
+
 (defun compilation-quote (exp env)
   (list (list 'MOVE (list :CONST (cadr exp)) :R0)))
 
@@ -210,6 +231,8 @@
         ((eq (car exp) 'progn)    (compilation-progn exp env))
         ((eq (car exp) 'while)    (compilation-while exp env))
         ((eq (car exp) 'loop)     (compilation-loop exp env))
+        ((eq (car exp) 'cond)     (compilation-cond exp env))
+        ((eq (car exp) 'case)     (compilation-case exp env))
         ((eq (car exp) 'setq)     (compilation-setq exp env))
         ((eq (car exp) 'defmacro) (compilation-defmacro exp))
         ((and (symbolp (car exp)) (get-defmacro (car exp)))
