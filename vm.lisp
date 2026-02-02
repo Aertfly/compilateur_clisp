@@ -126,7 +126,7 @@
   (write_value vm dest (* (read_value vm src) (read_value vm dest))))
 
 (defun vm_exec_inst_DIV (vm src dest)
-  (write_value vm dest (/ (read_value vm dest) (read_value vm src))))
+  (write_value vm dest (truncate (/ (read_value vm dest) (read_value vm src)))))
 
 (defun vm_exec_inst_INCR (vm dest)
   (let ((target (if (listp dest) (resolve_addr vm dest) dest)))
