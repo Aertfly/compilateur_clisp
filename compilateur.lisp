@@ -337,18 +337,33 @@
 (defun compiler-expression (exp)
   (append (compilation exp) '((HALT))))
 
-(defun compiler-fichier (filename)
+(defun compiler-fichier ()
   (let ((code-functions '())
         (expressions-main '()))
-    (with-open-file (stream filename)
+    ;; 1. Lecture du fichier source et compilation
+    (with-open-file (stream "code.lisp")
       (do ((exp (read stream nil 'eof) (read stream nil 'eof)))
           ((eq exp 'eof))
         (if (and (listp exp) (eq (car exp) 'defun))
             (setf code-functions (append code-functions (compilation-defun exp)))
             (setf expressions-main (append expressions-main (compilation exp))))))
     
-    (append '((JMP :START)) 
-            code-functions      
-            '((LABEL :START)) 
-            expressions-main   
-            '((HALT)))))       
+    ;; 2. Assemblage du code final
+    (let ((code-final (append '((JMP :START)) 
+                              code-functions      
+                              '((LABEL :START)) 
+                              expressions-main   
+                              '((HALT)))))
+      
+      ;; 3. Écriture forcée dans "cible.asm"
+      (with-open-file (out "cible.asm"
+                           :direction :output
+                           :if-exists :supersede
+                           :if-does-not-exist :create)
+        (dolist (ins code-final)
+          (print ins out)))
+      
+      ;; On retourne la liste pour que la VM puisse l'utiliser
+      code-final)))
+
+(compiler-fichier)

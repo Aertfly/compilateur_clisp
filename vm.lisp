@@ -352,3 +352,24 @@
   (let ((val (read_value vm src)))
     (format t "~S~%" val) ;; Affiche la valeur suivie d'un saut de ligne
     (set-prop vm :R0 val))) ;; PRIN retourne la valeur affichée (comme print en Lisp)
+
+(defun executer-cible ()
+  (vm_make 'vm 5000)
+  
+  (let ((code-charge '()))
+    ;; 1. Lecture du fichier cible.asm
+    (with-open-file (stream "cible.asm" :direction :input)
+      (do ((ins (read stream nil 'eof) (read stream nil 'eof)))
+          ((eq ins 'eof))
+        (push ins code-charge)))
+    
+    ;; 2. On inverse la liste car 'push' l'a construite à l'envers
+    (let ((code-final (nreverse code-charge)))
+      ;; 3. Chargement et exécution
+      (vm_load code-final 'vm)
+      (vm_run 'vm)
+      
+      ;; 4. Affichage du résultat
+      (print (get-prop 'vm :R0)))))
+
+(executer-cible)
