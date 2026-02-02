@@ -222,6 +222,7 @@
   (cond ((null exp)   '((MOVE (:CONST NIL) :R0)))
         ((eq exp t)   '((MOVE (:CONST 1) :R0)))
         ((numberp exp)(list (list 'MOVE (list :CONST exp) :R0)))
+        ((keywordp exp) (list (list 'MOVE (list :CONST exp) :R0)))  ; Keywords comme constantes
         ((symbolp exp)
          (let ((res (trouver-variable exp env 0)))
            (if res (list (list 'MOVE (list :VAR (car res) (cdr res)) :R0))
