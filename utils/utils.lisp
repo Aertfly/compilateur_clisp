@@ -1,3 +1,7 @@
+;; Macro while pour compatibilité avec le code compilable
+(defmacro while (condition &body body)
+  `(loop while ,condition do (progn ,@body)))
+
 (defun get-prop (mv prop)
   (get mv prop))
 

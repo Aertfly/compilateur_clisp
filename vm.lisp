@@ -56,33 +56,61 @@
           (CDR    (let ((l (read_value vm (first args)))) (set-prop vm :R0 (if (consp l) (cdr l) nil))))
           (PRIN   (vm_exec_inst_PRIN vm (first args))))))))
 
-(defun resolve-argument (arg label-map)
-  (cond
-    ((and (symbolp arg) (gethash arg label-map))
-     (gethash arg label-map))
-    ((and (listp arg) (eq (first arg) :CONST)
-          (symbolp (second arg)) (gethash (second arg) label-map))
-     (list :CONST (gethash (second arg) label-map)))
-    (t arg)))
+;; Recherche dans une liste associative (alist)
+(defun alist-get (key alist)
+  (if alist
+      (if (eq key (car (car alist)))
+          (cdr (car alist))
+          (alist-get key (cdr alist)))
+      nil))
 
+;; Résout un argument en remplaçant les labels par leurs adresses
+(defun resolve-argument (arg label-map)
+  (let ((lookup nil))
+    (if (symbolp arg)
+        (progn
+          (setq lookup (alist-get arg label-map))
+          (if lookup lookup arg))
+        (if (listp arg)
+            (if (eq (car arg) :CONST)
+                (progn
+                  (setq lookup (alist-get (car (cdr arg)) label-map))
+                  (if lookup
+                      (cons :CONST (cons lookup nil))
+                      arg))
+                arg)
+            arg))))
+
+;; Résout les arguments d'une instruction
+(defun resolve-inst-args (args label-map)
+  (if args
+      (cons (resolve-argument (car args) label-map)
+            (resolve-inst-args (cdr args) label-map))
+      nil))
+
+;; Charge le code dans la VM
 (defun vm_load (code-list vm)
-  (let ((addr 0)
-        (label-map (make-hash-table))
-        (resolved-code nil))
-    (dolist (inst code-list)
-      (if (eq (first inst) 'LABEL)
-          (setf (gethash (second inst) label-map) addr)
-          (incf addr)))
-    (dolist (inst code-list)
-      (unless (eq (first inst) 'LABEL)
-        (push (cons (first inst) 
-                    (mapcar (lambda (arg) (resolve-argument arg label-map)) (rest inst)))
-              resolved-code)))
-    (setf resolved-code (nreverse resolved-code))
-    (setf addr 0)
-    (dolist (inst resolved-code)
-      (set-mem vm addr inst)
-      (incf addr))
+  (let ((addr 0) (label-map nil) (lst nil) (inst nil) (resolved nil))
+    ;; Première passe : construire la table des labels
+    (setq lst code-list)
+    (while lst
+      (setq inst (car lst))
+      (if (eq (car inst) 'LABEL)
+          (setq label-map (cons (cons (car (cdr inst)) addr) label-map))
+          (setq addr (+ addr 1)))
+      (setq lst (cdr lst)))
+    ;; Deuxième passe : résoudre les labels et charger en mémoire
+    (setq addr 0)
+    (setq lst code-list)
+    (while lst
+      (setq inst (car lst))
+      (if (eq (car inst) 'LABEL)
+          nil
+          (progn
+            (setq resolved (cons (car inst) (resolve-inst-args (cdr inst) label-map)))
+            (set-mem vm addr resolved)
+            (setq addr (+ addr 1))))
+      (setq lst (cdr lst)))
     (set-prop vm :labels label-map)))
 
 (defun resolve_addr (vm src)
