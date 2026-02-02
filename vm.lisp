@@ -199,13 +199,13 @@
     ;; Cas 3: Symbole -> délégation à Lisp (append, length, etc.)
     ((symbolp cible)
      (if (fboundp cible)
-         ;; Le nombre d'args est au sommet de la pile
+         ;; Le nombre d'args est dans :R3, les args sont sur la pile
          (let* ((sp (get-prop vm :SP))
-                (n-args (get-mem vm sp))
-                ;; Les args sont juste en dessous du compteur
-                (args (loop for i from 1 to n-args
+                (n-args (get-prop vm :R3))
+                ;; Les args sont au sommet de la pile
+                (args (loop for i from (1- n-args) downto 0
                             collect (get-mem vm (- sp i)))))
-           (set-prop vm :R0 (apply cible (nreverse args))))
+           (set-prop vm :R0 (apply cible args)))
          (error "JSR : Fonction Lisp inconnue ~S" cible)))
     
     (t (error "JSR : Cible invalide ~S" cible))))

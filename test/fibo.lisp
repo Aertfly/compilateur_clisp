@@ -9,4 +9,14 @@
       1
       (* n (factorielle (- n 1)))))
 
-(factorielle 50)
+(defun test-append ()
+  (append '(1 2 3) '(4 5 6)))
+
+(print "TEST FIBO")
+(print (fibo 10))
+
+;(print "TEST APPEND")
+;(print (test-append))
+
+;(print "TEST FACTORIELLE")
+;(factorielle 50)
