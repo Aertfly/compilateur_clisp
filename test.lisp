@@ -1,17 +1,12 @@
 (require "vm.lisp")
 (require "compilateur.lisp")
-
-(defmacro chronometre (expression)
-  (let ((debut (gensym)))
-    `(let ((,debut (get-internal-real-time))
-           (resultat ,expression))
-       (format t "~&[Chrono] ~5F s | ~A~%" 
-               (/ (- (get-internal-real-time) ,debut) (float internal-time-units-per-second))
-               ',expression)
-       resultat)))
+(require "utils/chronometre.lisp")
 
 (defun test ()
-  (compiler-fichier)
+  (when (probe-file "cible.asm") ; Suppression du fichier compilé
+    (delete-file "cible.asm"))
+
+  (chronometre (compiler-fichier)) ; Compilation
   (chronometre (executer-cible)) ; Exécution dans la VM
   (chronometre (eval (with-open-file (in "code.lisp") (read in))))) ; Exécution native
 
